@@ -226,3 +226,12 @@ Started testing out the effect of adding more dataset samples. Went from 1.2k to
 ![wandb_1.7k_examples](static/wandb_1.7k_examples.png)
 
 ![sample_v22](static/sample_v22.png)
+
+### Progress August 19
+
+Efforts have been started by Zach to begin scaling up the size of the model, as well as the training batch size such that we make sure to be fully utilizing the hardware we are running on. Results after ~130K steps looks pretty promising.
+
+![train loss](static/train_loss_20240819.png)
+![test loss](static/test_loss_20240819.png)
+![test topk 3](static/test_topk_3_20240819.png)
+![test topk 6](static/test_topk_6_20240819.png)
