@@ -701,7 +701,7 @@ class AppConfig:
 
     # wandb parameters
     wandb_project: str = "synthbank_experiments"
-    wandb_entity: str = 'sam-greydanus'  # Set this to your wandb username or team name
+    wandb_entity: str = 'zwimpee'  # Set this to your wandb username or team name
     wandb_run_name: str = f"{get_time_string()}_cursive_transformer"
 
 
