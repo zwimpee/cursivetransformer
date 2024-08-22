@@ -4,12 +4,15 @@ _Note (July 5, 2024): this repo is under active development and thus subject to 
 
 ## Quickstart
 
-```bash
-git clone https://github.com/zwimpee/cursivetransformer.git \
- && cd cursivetransformer \
- && pip install -r requirements.txt \
- && python train.py --wandb_entity {your-wandb-username} --wandb_project {wandb-project-name}
-```
+One-liner
+* `git clone https://github.com/greydanus/cursivetransformer.git && cd cursivetransformer && pip install -r requirements.txt && python train.py --wandb_entity {your-wandb-username} --wandb_project {wandb-project-name} --wandb_api_key {your-wandb-api-key}`
+
+Step by step
+* `git clone https://github.com/greydanus/cursivetransformer.git`
+* `cd cursivetransformer`
+* `pip install -r requirements.txt`
+* `python train.py --wandb_entity {your-wandb-username} --wandb_project {wandb-project-name} --wandb_api_key {your-wandb-api-key}`
+
 
 ## Making a dataset
 
@@ -188,3 +191,11 @@ Increased dataset size from 1.9k to 2.3k. Started a 200k step run with stepwise 
 ![sample_v28](static/sample_v28.png)
 
 ![sample_v29](static/sample_v29.png)
+
+
+### Progress August 22
+
+Moved all core code into a hacky 800-line script. Also moved the full dataset into a 2.5 MB zip file which I added to the git repo. Now the repo can be cloned and a training run started in one line of bash, so long as you have a Weights and Biases username/api key. This makes starting longer runs outside of the Colab environment much easier. Next step is to launch a longer run on a good GPU, potentially via Paperspace. Here's the one-liner:
+
+`git clone https://github.com/greydanus/cursivetransformer.git && cd cursivetransformer && pip install -r requirements.txt && python train.py --wandb_entity {your-wandb-username} --wandb_project {wandb-project-name} --wandb_api_key {your-wandb-api-key}`
+

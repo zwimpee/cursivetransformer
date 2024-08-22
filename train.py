@@ -1,6 +1,6 @@
 ########## IMPORTS AND A FEW GLOBAL VARIABLES ##########
 
-import os, sys, time, math, io, copy, json, pickle, glob, functools, zipfile, argparse
+import os, sys, time, math, io, copy, json, pickle, glob, functools, zipfile, argparse, getpass
 import numpy as np
 from scipy.ndimage import rotate
 from datetime import datetime
@@ -710,6 +710,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate a word bank')
     parser.add_argument('--wandb_entity', type=str, default='sam-greydanus', help='Set this to your wandb username or team name')
     parser.add_argument('--wandb_project', type=str, default='synthbank_experiments', help='W&B project name')
+    parser.add_argument('--wandb_api_key', type=str, default=None, help='Weights & Biases API Key')
     parser.add_argument('--max_seq_length', type=int, default=900, help='Context window size')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
     cli_args = parser.parse_args()
@@ -723,6 +724,11 @@ if __name__ == '__main__':
                      wandb_project=cli_args.wandb_project,
                      max_seq_length=cli_args.max_seq_length,
                      seed=cli_args.seed)
+
+    if "WANDB_API_KEY" not in os.environ:
+        if cli_args.wandb_api_key is None:
+            cli_args.wandb_api_key = getpass.getpass("Enter your W&B API key: ")
+        os.environ["WANDB_API_KEY"] = cli_args.wandb_api_key
 
     wandb.init(
         project=args.wandb_project,
