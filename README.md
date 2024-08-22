@@ -2,6 +2,13 @@
 
 _Note (July 5, 2024): this repo is under active development and thus subject to rapid breaking changes._
 
+## Quickstart
+
+* `git clone https://github.com/greydanus/cursivetransformer.git`
+* `cd cursivetransformer`
+* `pip install -r requirements.txt`
+* `python train.py`
+
 ## Making a dataset
 
 Let's construct a dataset of cursive pen strokes for training a handwriting model. We don't have an e-pen or any special hardware. Also, someday we want to allow people to clone their own handwriting in a demo. Thus we will use a strictly trackpad/mouse-based interface. This interface is defined in the self-contained `collect.html` which is a simple webpage that allows users to enter handwriting samples. It can prompt them with words from a word bank if desired. When they are finished entering samples, they can export the result to a JSON file. We experimented with a couple different approaches to dataset generation (tracing from pictures of cursive, writing multiple words at once, writing single words and then later stitching them together...) so this interface supports them all.
@@ -121,82 +128,6 @@ This sample is taken from early training. It's not the model's best, but it look
 
 ![sample_v19](static/sample_v19.png)
 
-
-
-### Progress August 06
-
-#### Experimental Results
-
-##### Cross-Attention Ablation Study
-
-- Reran the cross-attention ablation study (TODO: add specific results once available)
-- Confirmed the importance of cross-attention for generating coherent, context-appropriate handwriting
-
-##### Model Architecture Improvements
-
-- Successfully implemented and tested various cross-attention mechanisms:
-  - Standard cross-attention
-  - Causal cross-attention
-- Observed improved performance with causal cross-attention (TODO: quantify improvement)
-
-##### Dataset Enhancements
-
-- Expanded dataset to include both cursive and print handwriting styles
-- Current dataset size: 500k examples
-- Improved data augmentation techniques for better generalization
-
-##### Training Optimizations
-
-- Increased training duration from 30k steps on L4 GPU to 50k steps on A100 GPU
-- Experimented with learning rate schedules; found constant learning rate of 1e-2 to be most effective
-- Doubled context window to 1500 tokens, allowing for longer handwriting sequences
-
-#### Engineering Efforts
-
-##### Tokenization Improvements
-
-- Implemented polar coordinate tokenization (`theta`, `radius_and_is_pen_down`)
-- Reduced context window size by 33% without loss of performance
-- Discovered the importance of token order: "point and then shoot" (`theta`, `radius_and_is_pen_down`) outperforms "shoot and then point" (`radius_and_is_pen_down`, `theta`)
-
-###### Infrastructure and Tooling
-
-- Integrated Weights and Biases (W&B) for efficient logging and visualization
-- Developed custom data collection interface (`collect.html`) for gathering handwriting samples
-- Created preprocessing pipeline for converting raw JSON data to tokenized format
-
-#### Code Optimizations
-
-- Refactored core Transformer architecture for improved readability and maintainability
-- Implemented various cross-attention mechanisms as modular components
-
-#### Future Directions
-
-1. Further expand and diversify the dataset
-   - Collect more handwriting styles
-   - Increase variety of words and phrases
-
-2. Experiment with advanced model architectures
-   - Test different Transformer variants (e.g., Performer, Reformer)
-   - Explore multi-task learning approaches
-
-3. Improve inference speed and model efficiency
-   - Investigate quantization techniques
-   - Optimize for deployment on various hardware platforms
-
-4. Develop user interface for real-time handwriting generation
-   - Create web-based demo for interactive handwriting synthesis
-   - Implement style transfer capabilities
-
-5. Conduct in-depth analysis of learned representations
-   - Visualize attention patterns and token embeddings
-   - Investigate interpretability of the model's internal representations
-
-6. Explore applications beyond handwriting synthesis
-   - Handwriting recognition
-   - Style transfer between different handwriting styles
-   - Personalized font generation
-
 ### Progress August 5
 
 **Compare cartesian and polar tokenizers.** For some time we have been unsure of which is better: using a cartesian or polar representation of pen offsets. After some time away from this project, we solved a pernicious bug in the cartesian tokenizer and was able to do a side-by-side comparison. At the time of writing, both runs were in progress and the sample quality of the model using the polar tokenizer seemed a bit better. This is good news because the polar representation also uses three tokens per stroke rather than four, thus it permits a 33% longer context window. We will let the models train to completion before making a final call.
@@ -227,11 +158,31 @@ Started testing out the effect of adding more dataset samples. Went from 1.2k to
 
 ![sample_v22](static/sample_v22.png)
 
-### Progress August 19
+Since, in the runs for this day, we had downsampled the point density by 63% (pretty aggressive) we had enough room to fit six words in a context window of just 1250 tokens. We trained this model for a full 50k steps and it started to behave fairly well. While its spelling is not perfect, it is getting better. With perhaps twice the number of training examples and more than 50k gradient steps, we suspect that we'll be able to obtain a model that is able to spell properly.
 
-Efforts have been started by Zach to begin scaling up the size of the model, as well as the training batch size such that we make sure to be fully utilizing the hardware we are running on. Results after ~130K steps looks pretty promising.
 
-![train loss](static/train_loss_20240819.png)
-![test loss](static/test_loss_20240819.png)
-![test topk 3](static/test_topk_3_20240819.png)
-![test topk 6](static/test_topk_6_20240819.png)
+![sample_v23](static/sample_v23.png)
+
+![sample_v24](static/sample_v24.png)
+
+![sample_v25](static/sample_v25.png)
+
+
+### Progress August 14
+
+When in doubt, train for longer. Here are some cursive transformer samples from a little past 100k steps. The model crosses t's and dots its i's. This involved downsampling stroke data as aggressively as possible, running an A100 for several hours and using a smaller context.
+
+
+![sample_v26](static/sample_v26.png)
+
+![sample_v27](static/sample_v27.png)
+
+### Progress August 21
+
+Increased dataset size from 1.9k to 2.3k. Started a 200k step run with stepwise lr decay of 0.33 every 50k steps. Figure below shows that decaying learning rate at 50k steps has a beneficial effect.
+
+![wandb_lr_decay](static/wandb_lr_decay.png)
+
+![sample_v28](static/sample_v28.png)
+
+![sample_v29](static/sample_v29.png)
