@@ -4,10 +4,12 @@ _Note (July 5, 2024): this repo is under active development and thus subject to 
 
 ## Quickstart
 
-* `git clone https://github.com/greydanus/cursivetransformer.git`
-* `cd cursivetransformer`
-* `pip install -r requirements.txt`
-* `python train.py`
+```bash
+git clone https://github.com/zwimpee/cursivetransformer.git \
+ && cd cursivetransformer \
+ && pip install -r requirements.txt \
+ && python train.py
+```
 
 ## Making a dataset
 
