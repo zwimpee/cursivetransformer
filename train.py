@@ -691,6 +691,7 @@ class AppConfig:
 
     # sampling
     top_k: int = -1
+    num_words: int = 4
 
     # model configuration
     n_layer: int = 4
