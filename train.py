@@ -670,6 +670,12 @@ class ModelConfig:
 
 @dataclass
 class AppConfig:
+    # wandb parameters
+    wandb_project: str
+    wandb_entity: str
+    wandb_run_name: str
+    wandb_api_key: str
+    
     # system/input/output
     work_dir: str = 'out'
     resume: bool = False
@@ -699,13 +705,6 @@ class AppConfig:
     batch_size: int = 32
     learning_rate: float = 1e-2
     weight_decay: float = 1e-4
-
-    # wandb parameters
-    wandb_project: str
-    wandb_entity: str
-    wandb_run_name: str
-    wandb_api_key: str
-
 
 def load_config(path) -> AppConfig:
     with open(path, 'r') as f:
