@@ -735,7 +735,7 @@ if __name__ == '__main__':
 
     if "WANDB_API_KEY" not in os.environ:
         if args.wandb_api_key is None:
-            config.wandb_api_key = getpass.getpass("Enter your W&B API key: ")
+            args.wandb_api_key = getpass.getpass("Enter your W&B API key: ")
         os.environ["WANDB_API_KEY"] = args.wandb_api_key
 
     wandb.init(
