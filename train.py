@@ -701,9 +701,9 @@ class AppConfig:
     weight_decay: float = 1e-4
 
     # wandb parameters
-    wandb_project: str = RUN_TAG
-    wandb_entity: str = 'zwimpee'  # Set this to your wandb username or team name
-    wandb_run_name: str = f"{get_time_string()}_{RUN_TAG}_accelerate"
+    wandb_project: str
+    wandb_entity: str
+    wandb_run_name: str
 
 
 def load_config(path) -> AppConfig:
