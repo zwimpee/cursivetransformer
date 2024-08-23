@@ -668,18 +668,23 @@ class ModelConfig:
     n_ctx_head: int = 4 # number of heads for cross-attention
     ablate_cross_attention: bool = False
 
-
 @dataclass
 class AppConfig:
     # system/input/output
     work_dir: str = 'out'
+    accelerate_config_path: str = 'configs/accelerate.yaml'
+    data_dir: str = 'data/synthbank_v2'
+    data_file: str = 'data.json'
     resume: bool = False
     sample_only: bool = False
     num_workers: int = 1 # 4
-    max_steps: int = 200000
-    lr_decay: float = 1/3.
+    max_steps: int = 150000
+    log_interval: int = 1000
+    eval_interval: int = 1000
+    sample_interval: int = 1000
+    lr_decay: float = 1.
     device: str = 'cuda'
-    seed: int = 3407
+    seed: int = 42069
 
     # sampling
     top_k: int = -1
@@ -691,8 +696,7 @@ class AppConfig:
     n_head: int = 4
     ablate_cross_attention: bool = False  # New flag to ablate cross-attention
     augment: bool = True
-    max_seq_length: int = 900
-    num_words: int = 4
+    max_seq_length: int = 1250
 
     # optimization
     batch_size: int = 32
@@ -700,35 +704,39 @@ class AppConfig:
     weight_decay: float = 1e-4
 
     # wandb parameters
-    wandb_project: str = "synthbank_experiments"
+    wandb_project: str = RUN_TAG
     wandb_entity: str = 'zwimpee'  # Set this to your wandb username or team name
-    wandb_run_name: str = f"{get_time_string()}_cursive_transformer"
+    wandb_run_name: str = f"{get_time_string()}_{RUN_TAG}_accelerate"
 
+
+def load_config(path) -> AppConfig:
+    with open(path, 'r') as f:
+        args = json.load(f)
+    return AppConfig(**args)
+
+def get_args():
+    parser = argparse.ArgumentParser(description="Training a Cursive Transformer")
+    parser.add_argument("--config_file", type=str, default="configs/default.json", help="Path to the JSON config file")
+    return parser.parse_args()
 
 if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser(description='Generate a word bank')
-    parser.add_argument('--wandb_entity', type=str, default='sam-greydanus', help='Set this to your wandb username or team name')
-    parser.add_argument('--wandb_project', type=str, default='synthbank_experiments', help='W&B project name')
-    parser.add_argument('--wandb_api_key', type=str, default=None, help='Weights & Biases API Key')
-    parser.add_argument('--max_seq_length', type=int, default=900, help='Context window size')
-    parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
-    cli_args = parser.parse_args()
+    args = get_args()
+    
+    # Set up config
+    args = load_config(args.config_file)
+    
+    # Initialize working directory
+    os.makedirs(args.work_dir, exist_ok=True)
     
     # Try attaching to GPU
     DEVICE = str(torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
     print('Using:', DEVICE)
 
-
-    args = AppConfig(wandb_entity=cli_args.wandb_entity,
-                     wandb_project=cli_args.wandb_project,
-                     max_seq_length=cli_args.max_seq_length,
-                     seed=cli_args.seed)
-
     if "WANDB_API_KEY" not in os.environ:
-        if cli_args.wandb_api_key is None:
-            cli_args.wandb_api_key = getpass.getpass("Enter your W&B API key: ")
-        os.environ["WANDB_API_KEY"] = cli_args.wandb_api_key
+        if args.wandb_api_key is None:
+            config.wandb_api_key = getpass.getpass("Enter your W&B API key: ")
+        os.environ["WANDB_API_KEY"] = args.wandb_api_key
 
     wandb.init(
         project=args.wandb_project,
