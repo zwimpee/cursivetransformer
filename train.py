@@ -704,6 +704,7 @@ class AppConfig:
     wandb_project: str
     wandb_entity: str
     wandb_run_name: str
+    wandb_api_key: str
 
 
 def load_config(path) -> AppConfig:
