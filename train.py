@@ -672,9 +672,6 @@ class ModelConfig:
 class AppConfig:
     # system/input/output
     work_dir: str = 'out'
-    accelerate_config_path: str = 'configs/accelerate.yaml'
-    data_dir: str = 'data/synthbank_v2'
-    data_file: str = 'data.json'
     resume: bool = False
     sample_only: bool = False
     num_workers: int = 1 # 4
