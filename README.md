@@ -7,7 +7,7 @@ _Note (July 5, 2024): this repo is under active development and thus subject to 
 * One-liner
 
     ```shell
-    git clone https://github.com/zwimpee/cursivetransformer.git && cd cursivetransformer && pip install -r requirements.txt && python train.py --config-file configs/config.json
+    rm -rf cursivetransformer && git clone https://github.com/zwimpee/cursivetransformer.git && cd cursivetransformer && pip install -r requirements.txt && python train.py --config_file configs/config.json
     ```
 
 * Step by step
