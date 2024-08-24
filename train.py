@@ -341,40 +341,146 @@ class StrokeDataset(Dataset):
 
         return x, c, y
 
+def create_base_rotations(num_rotations):
+    angles = np.linspace(0, 2*np.pi, num_rotations, endpoint=False)
+    return [np.array([[np.cos(theta), -np.sin(theta)], 
+                      [np.sin(theta), np.cos(theta)]]) for theta in angles]
 
-def create_datasets(augment=True, max_seq_length=1100, num_words=3):
-  np.random.seed(0) ; torch.manual_seed(0)
-  data = load_and_parse_data()
+def quantize_magnitude(magnitude, m_bins):
+    return np.digitize(magnitude, m_bins) - 1
 
-  # partition the input data into a training and the test set
-  test_set_size = min(1000, int(len(data) * 0.05)) # 10% of the training set, or up to 1000 examples
-  rp = torch.randperm(len(data)).tolist()
+class QuantizedStrokeDataset(Dataset):
+    def __init__(self, strokes, texts, chars, num_rotations=64, num_magnitude_bins=256, max_seq_length=1100, max_text_length=50, name='', augment=False):
+        self.name = name
+        self.strokes = strokes
+        self.texts = texts
+        self.chars = chars
+        self.augment = augment
+        self.base_rotations = create_base_rotations(num_rotations)
+        self.m_bins = np.concatenate([
+            np.linspace(0, 0.1, num_magnitude_bins//2),
+            np.geomspace(0.1, 5, num_magnitude_bins//2)[1:]
+        ])
 
-  train_examples = generate_word_combos([data[i] for i in rp[:-test_set_size]], desired_num_combos=249000, num_words=num_words)
-  train_examples = [train_examples[i] for i in torch.randperm(len(train_examples)).tolist()]
+        self.feature_sizes = [num_rotations, num_magnitude_bins, 2]  # 2 for pen state
+        self.cumulative_sizes = np.cumsum([0] + self.feature_sizes)
 
-  test_examples = generate_word_combos([data[i] for i in rp[-test_set_size:]], desired_num_combos=1000, num_words=num_words)
-  test_examples = [test_examples[i] for i in torch.randperm(len(test_examples)).tolist()]
+        self.PAD_TOKEN = sum(self.feature_sizes)
+        self.END_TOKEN = sum(self.feature_sizes) + 1
 
-  train_strokes = [copy.deepcopy(v['points']) for v in train_examples]
-  train_texts = [copy.deepcopy(v['metadata']['asciiSequence']) for v in train_examples]
+        self.stoi = {ch:i+1 for i,ch in enumerate(chars)}
+        self.itos = {i:s for s,i in self.stoi.items()}
+        self.char_PAD_TOKEN = 0
 
-  test_strokes = [copy.deepcopy(v['points']) for v in test_examples]
-  test_texts = [copy.deepcopy(v['metadata']['asciiSequence']) for v in test_examples]
+        self.max_seq_length = max_seq_length
+        self.max_text_length = max_text_length
 
-  chars = "abcdefghijklmnopqrstuvwxyz "
-  print(f"Number of examples in the train dataset: {len(train_examples)}")
-  print(f"Number of examples in the test dataset: {len(test_examples)}")
-  print(f"Max token sequence length: {max_seq_length}")
-  print(f"Number of unique characters in the ascii vocabulary: {len(chars)}")
-  print("Ascii vocabulary:")
-  print(f'\t"{chars}"')
-  print(f"Split up the dataset into {len(train_examples)} training examples and {len(test_examples)} test examples")
+    def get_vocab_size(self):
+        return sum(self.feature_sizes) + 2  # +2 for PAD and END tokens
 
-  # wrap in dataset objects
-  train_dataset = StrokeDataset(train_strokes, train_texts, chars, max_seq_length, name='train', augment=augment)
-  test_dataset = StrokeDataset(test_strokes, test_texts, chars, max_seq_length, name='test', augment=augment)
-  return train_dataset, test_dataset
+    def quantize_stroke(self, stroke):
+        quantized_stroke = []
+        for i in range(1, len(stroke)):
+            delta = stroke[i, :2] - stroke[i-1, :2]
+            magnitude = np.linalg.norm(delta)
+            direction = delta / magnitude if magnitude != 0 else np.array([1, 0])
+            
+            closest_rotation = min(range(len(self.base_rotations)), 
+                                   key=lambda k: np.linalg.norm(self.base_rotations[k].dot([1, 0]) - direction))
+            
+            quantized_magnitude = quantize_magnitude(magnitude, self.m_bins)
+            
+            quantized_stroke.append((closest_rotation, quantized_magnitude, int(stroke[i, 2])))
+        
+        return quantized_stroke
+
+    def encode_stroke(self, stroke):
+        quantized_stroke = self.quantize_stroke(stroke)
+        encoded = np.array([(r, m, p) for r, m, p in quantized_stroke])
+        encoded[:, 0] += self.cumulative_sizes[0]
+        encoded[:, 1] += self.cumulative_sizes[1]
+        encoded[:, 2] += self.cumulative_sizes[2]
+        return encoded.flatten()
+
+    def decode_stroke(self, ix):
+        if isinstance(ix, torch.Tensor):
+            ix = ix.cpu().numpy()
+
+        ix = ix[(ix != self.PAD_TOKEN) & (ix != self.END_TOKEN)]
+        ix = ix.reshape(-1, 3)
+
+        decoded_stroke = np.zeros((len(ix) + 1, 3))
+        for i, (r, m, p) in enumerate(ix, 1):
+            r -= self.cumulative_sizes[0]
+            m -= self.cumulative_sizes[1]
+            p -= self.cumulative_sizes[2]
+
+            magnitude = self.m_bins[m]
+            direction = self.base_rotations[r].dot([1, 0])
+            delta = direction * magnitude
+            decoded_stroke[i, :2] = decoded_stroke[i-1, :2] + delta
+            decoded_stroke[i, 2] = p
+
+        return decoded_stroke
+
+    def __getitem__(self, idx):
+        stroke = self.strokes[idx]
+        text = self.texts[idx]
+
+        if self.augment:
+            stroke = self.augment_stroke(stroke.copy())
+
+        encoded_stroke = self.encode_stroke(stroke)
+        x = torch.full((self.max_seq_length,), self.PAD_TOKEN, dtype=torch.long)
+        y = torch.full((self.max_seq_length,), self.PAD_TOKEN, dtype=torch.long)
+
+        seq_len = min(len(encoded_stroke), self.max_seq_length - 1)  # -1 to leave room for END token
+        x[:seq_len] = torch.tensor(encoded_stroke[:seq_len], dtype=torch.long)
+        x[seq_len] = self.END_TOKEN
+
+        y[:seq_len] = x[1:seq_len+1]
+        y[seq_len] = self.END_TOKEN
+
+        encoded_text = self.encode_text(text)
+        c = torch.full((self.max_text_length,), self.char_PAD_TOKEN, dtype=torch.long)
+        text_len = min(len(encoded_text), self.max_text_length)
+        c[:text_len] = encoded_text[:text_len]
+
+        return x, c, y
+
+
+def create_datasets(augment=True, max_seq_length=1100, num_words=3, num_rotations=64, num_magnitude_bins=256):
+    np.random.seed(0) ; torch.manual_seed(0)
+    data = load_and_parse_data()
+
+    # partition the input data into a training and the test set
+    test_set_size = min(1000, int(len(data) * 0.05)) # 10% of the training set, or up to 1000 examples
+    rp = torch.randperm(len(data)).tolist()
+
+    train_examples = generate_word_combos([data[i] for i in rp[:-test_set_size]], desired_num_combos=249000, num_words=num_words)
+    train_examples = [train_examples[i] for i in torch.randperm(len(train_examples)).tolist()]
+
+    test_examples = generate_word_combos([data[i] for i in rp[-test_set_size:]], desired_num_combos=1000, num_words=num_words)
+    test_examples = [test_examples[i] for i in torch.randperm(len(test_examples)).tolist()]
+
+    train_strokes = [copy.deepcopy(v['points']) for v in train_examples]
+    train_texts = [copy.deepcopy(v['metadata']['asciiSequence']) for v in train_examples]
+
+    test_strokes = [copy.deepcopy(v['points']) for v in test_examples]
+    test_texts = [copy.deepcopy(v['metadata']['asciiSequence']) for v in test_examples]
+
+    chars = "abcdefghijklmnopqrstuvwxyz "
+    print(f"Number of examples in the train dataset: {len(train_examples)}")
+    print(f"Number of examples in the test dataset: {len(test_examples)}")
+    print(f"Max token sequence length: {max_seq_length}")
+    print(f"Number of unique characters in the ascii vocabulary: {len(chars)}")
+    print("Ascii vocabulary:")
+    print(f'\t"{chars}"')
+    print(f"Split up the dataset into {len(train_examples)} training examples and {len(test_examples)} test examples")
+
+    train_dataset = QuantizedStrokeDataset(train_strokes, train_texts, chars, num_rotations, num_magnitude_bins, max_seq_length, name='train', augment=augment)
+    test_dataset = QuantizedStrokeDataset(test_strokes, test_texts, chars, num_rotations, num_magnitude_bins, max_seq_length, name='test', augment=augment)
+    return train_dataset, test_dataset 
 
 
 class InfiniteDataLoader:
@@ -752,7 +858,15 @@ if __name__ == '__main__':
     # writer = SummaryWriter(log_dir=args.work_dir)
 
     # init datasets
-    train_dataset, test_dataset = create_datasets(augment=args.augment, max_seq_length=args.max_seq_length, num_words=args.num_words)
+    # train_dataset, test_dataset = create_datasets(augment=args.augment, max_seq_length=args.max_seq_length, num_words=args.num_words)
+    # Create datasets with quantized tokenization
+    train_dataset, test_dataset = create_datasets(
+        augment=args.augment, 
+        max_seq_length=args.max_seq_length, 
+        num_words=args.num_words,
+        num_rotations=64,  # You can make this configurable
+        num_magnitude_bins=256  # You can make this configurable
+    )
     vocab_size = train_dataset.get_vocab_size()
     block_size = train_dataset.get_stroke_seq_length()
     context_block_size = train_dataset.get_text_seq_length()
