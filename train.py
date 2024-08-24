@@ -681,6 +681,8 @@ class AppConfig:
     resume: bool = False
     sample_only: bool = False
     num_workers: int = 1 # 4
+    max_steps: int = 400000
+    lr_decay: float = .5
     max_steps: int = 150000
     log_interval: int = 1000
     eval_interval: int = 1000

@@ -16,6 +16,16 @@ _Note (July 5, 2024): this repo is under active development and thus subject to 
   * `pip install -r requirements.txt`
   * `python train.py --config-file configs/config.json`
 
+Paperspace dependencies (or use `paperspace.sh`)
+* `sudo apt update && sudo apt upgrade -y`
+* `sudo apt install linux-headers-$(uname -r) build-essential -y`
+* `sudo add-apt-repository ppa:graphics-drivers/ppa -y && sudo apt update`
+* `sudo apt install nvidia-driver-560 -y`
+* `sudo reboot`
+* `nvidia-smi`
+* In a `screen` tab:
+	* `git clone https://github.com/greydanus/cursivetransformer.git && cd cursivetransformer && pip install -r requirements.txt && export WANDB_API_KEY={your-wandb-api-key} && python3 train.py --wandb_entity {your-wandb-username} --wandb_project {wandb-project-name}`
+
 
 ## Making a dataset
 
@@ -229,3 +239,9 @@ Zach also managed to generate a rather freaky-looking sample, which we are inclu
 ### Progress August 23
 
 Added almost 250 new samples to the dataset for a total of 2750 words (from which, of course, we are generating 250k 4-word training examples). Did a quick quality control run on the enlarged dataset; everything looked good.
+
+### Progress August 24
+
+Zach trained for 80k steps on 2750 word dataset. Slight qualitative improvement. Slight test loss improvement.
+
+![sample_v33](static/sample_v33.png)
