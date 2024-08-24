@@ -111,52 +111,6 @@ def generate_word_combos(raw_json, desired_num_combos=10000, num_words=3):
     combo_json.append( combine_handwriting_examples(words_to_merge) )
   return combo_json
 
-    
-def combine_handwriting_examples(examples, space_width=0.17):
-    assert len(set(ex['metadata']['author'] for ex in examples)) == 1, "All examples must have the same author"
-
-    combined_metadata = {
-        'author': examples[0]['metadata']['author'],
-        'asciiSequence': ' '.join(ex['metadata']['asciiSequence'] for ex in examples),
-        'pointCount': sum(ex['metadata']['pointCount'] for ex in examples),
-        'strokeCount': sum(ex['metadata']['strokeCount'] for ex in examples),
-        'aspectRatio': examples[0]['metadata']['aspectRatio']
-    }
-
-    combined_points, current_x_offset, total_width = [], 0, 0
-
-    for i, example in enumerate(examples):
-        points = example['points']
-        word_width = np.max(points[:, 0]) - np.min(points[:, 0])
-        total_width += word_width
-
-        normalized_points = points.copy()
-        normalized_points[:, 0] -= np.min(points[:, 0])
-        normalized_points[:, 0] += current_x_offset
-
-        combined_points.append(normalized_points)
-        current_x_offset += word_width
-
-        if i < len(examples) - 1:
-            combined_points.append(np.array([[current_x_offset + space_width, normalized_points[-1, 1], 0]]))
-            current_x_offset += space_width
-            total_width += space_width
-            combined_metadata['pointCount'] += 1
-
-    combined_points = np.vstack(combined_points)
-    return {'metadata': combined_metadata, 'points': combined_points}
-
-def generate_word_combos(raw_json, desired_num_combos=10000, num_words=3):
-  num_combos = comb(len(raw_json), num_words)
-  print(f'For a dataset of {len(raw_json)} examples we can generate {num_combos} combinations of {num_words} examples.')
-  print(f'Generating {desired_num_combos} random (and thus possibly overlapping) combos...')
-  combo_json = []
-  for i in range(desired_num_combos):
-    ixs = np.random.choice(len(raw_json), size=num_words, replace=False)
-    words_to_merge = [raw_json[i] for i in ixs]
-    combo_json.append( combine_handwriting_examples(words_to_merge) )
-  return combo_json
-
 
 ########## TOKENIZATION, AUGMENTATION, AND DATA IO ##########
 
@@ -349,13 +303,10 @@ def create_base_rotations(num_rotations):
 def quantize_magnitude(magnitude, m_bins):
     return np.digitize(magnitude, m_bins) - 1
 
-class QuantizedStrokeDataset(Dataset):
+class QuantizedStrokeDataset(StrokeDataset):
     def __init__(self, strokes, texts, chars, num_rotations=64, num_magnitude_bins=256, max_seq_length=1100, max_text_length=50, name='', augment=False):
-        self.name = name
-        self.strokes = strokes
-        self.texts = texts
-        self.chars = chars
-        self.augment = augment
+        super().__init__(strokes, texts, chars, max_seq_length, max_text_length, name, augment)
+        
         self.base_rotations = create_base_rotations(num_rotations)
         self.m_bins = np.concatenate([
             np.linspace(0, 0.1, num_magnitude_bins//2),
@@ -365,18 +316,15 @@ class QuantizedStrokeDataset(Dataset):
         self.feature_sizes = [num_rotations, num_magnitude_bins, 2]  # 2 for pen state
         self.cumulative_sizes = np.cumsum([0] + self.feature_sizes)
 
-        self.PAD_TOKEN = sum(self.feature_sizes)
-        self.END_TOKEN = sum(self.feature_sizes) + 1
+        self.vocab_size = self.calculate_vocab_size()
+        self.PAD_TOKEN = self.vocab_size
+        self.END_TOKEN = self.vocab_size + 1
 
-        self.stoi = {ch:i+1 for i,ch in enumerate(chars)}
-        self.itos = {i:s for s,i in self.stoi.items()}
-        self.char_PAD_TOKEN = 0
-
-        self.max_seq_length = max_seq_length
-        self.max_text_length = max_text_length
+    def calculate_vocab_size(self):
+        return np.prod(self.feature_sizes)
 
     def get_vocab_size(self):
-        return sum(self.feature_sizes) + 2  # +2 for PAD and END tokens
+        return self.vocab_size + 2  # +2 for PAD and END tokens
 
     def quantize_stroke(self, stroke):
         quantized_stroke = []
