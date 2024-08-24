@@ -202,3 +202,30 @@ Moved all core code into a hacky 800-line script. Also moved the full dataset in
 
 `git clone https://github.com/greydanus/cursivetransformer.git && cd cursivetransformer && pip install -r requirements.txt && python train.py --wandb_entity {your-wandb-username} --wandb_project {wandb-project-name} --wandb_api_key {your-wandb-api-key}`
 
+Here are samples generated after 180k gradient steps:
+
+![sample_v30](static/sample_v30.png)
+
+![sample_v31](static/sample_v31.png)
+
+I'm particularly interested in the second of these two samples. I know that it isn't perfect, but this is a really "hard" example to get right. On the first word, the model has to go all the way back to the first character in order to dot the i, then it has to go to the last character to cross the t, then it has to go to the next word. Those are all big leaps and it manages to do them close to perfectly apart from the dot of the i being a bit shifted. Then it manages to do a good job with the dot on the i in the second word and the dot on the j in the third. This is the best quality I've seen in a sample so far - exciting.
+
+**[(Batch) Size Matters](https://wandb.ai/zwimpee/cursivetransformer/reports/Size-Matters--Vmlldzo5MTIyMjY0)**. Zach did a run where he compared batch size 32 to 64 and it looks like using a batch size of 64 has some strong benefits.
+
+![size_meme](static/size_meme.png)
+
+![frog](static/frog.png)
+
+![test_loss_32_64](static/test_loss_32_64.png)
+
+Here is a sample from the model trained with a 128k batch size:
+
+![sample_v32](static/sample_v32.png)
+
+Zach also managed to generate a rather freaky-looking sample, which we are including here for your edification:
+
+![sample_freaky](static/sample_freaky.png)
+
+### Progress August 23
+
+Added almost 250 new samples to the dataset for a total of 2750 words (from which, of course, we are generating 250k 4-word training examples). Did a quick quality control run on the enlarged dataset; everything looked good.
