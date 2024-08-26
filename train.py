@@ -300,9 +300,6 @@ def create_base_rotations(num_rotations):
     return [np.array([[np.cos(theta), -np.sin(theta)], 
                       [np.sin(theta), np.cos(theta)]]) for theta in angles]
 
-def quantize_magnitude(magnitude, m_bins):
-    return np.digitize(magnitude, m_bins) - 1
-
 class QuantizedStrokeDataset(StrokeDataset):
     def __init__(self, strokes, texts, chars, num_rotations=64, num_magnitude_bins=256, max_seq_length=1100, max_text_length=50, name='', augment=False):
         super().__init__(strokes, texts, chars, max_seq_length, max_text_length, name, augment)
@@ -313,63 +310,71 @@ class QuantizedStrokeDataset(StrokeDataset):
             np.geomspace(0.1, 5, num_magnitude_bins//2)[1:]
         ])
 
-        self.feature_sizes = [num_rotations, num_magnitude_bins, 2]  # 2 for pen state
+        self.feature_sizes = [num_rotations, num_magnitude_bins * 2]  # *2 for pen up/down states
         self.cumulative_sizes = np.cumsum([0] + self.feature_sizes)
 
-        self.vocab_size = self.calculate_vocab_size()
+        # Update vocab size and special tokens
+        self.vocab_size = sum(self.feature_sizes)
         self.PAD_TOKEN = self.vocab_size
         self.END_TOKEN = self.vocab_size + 1
 
-    def calculate_vocab_size(self):
-        return np.prod(self.feature_sizes)
-
-    def get_vocab_size(self):
-        return self.vocab_size + 2  # +2 for PAD and END tokens
-
-    def quantize_stroke(self, stroke):
+    def quantize_stroke(self, stroke_offsets):
         quantized_stroke = []
-        for i in range(1, len(stroke)):
-            delta = stroke[i, :2] - stroke[i-1, :2]
-            magnitude = np.linalg.norm(delta)
-            direction = delta / magnitude if magnitude != 0 else np.array([1, 0])
+        for i in range(len(stroke_offsets)):
+            dx, dy, pen = stroke_offsets[i]
+            r = np.hypot(dx, dy)
+            theta = np.arctan2(dy, dx)
             
             closest_rotation = min(range(len(self.base_rotations)), 
-                                   key=lambda k: np.linalg.norm(self.base_rotations[k].dot([1, 0]) - direction))
+                                   key=lambda k: np.abs(np.arctan2(self.base_rotations[k][1,0], self.base_rotations[k][0,0]) - theta))
             
-            quantized_magnitude = quantize_magnitude(magnitude, self.m_bins)
+            quantized_magnitude = np.digitize(r, self.m_bins) - 1
             
-            quantized_stroke.append((closest_rotation, quantized_magnitude, int(stroke[i, 2])))
+            quantized_stroke.append((closest_rotation, quantized_magnitude, int(pen)))
         
         return quantized_stroke
 
     def encode_stroke(self, stroke):
-        quantized_stroke = self.quantize_stroke(stroke)
+        stroke_offsets = strokes_to_offsets(stroke)
+        quantized_stroke = self.quantize_stroke(stroke_offsets)
         encoded = np.array([(r, m, p) for r, m, p in quantized_stroke])
-        encoded[:, 0] += self.cumulative_sizes[0]
-        encoded[:, 1] += self.cumulative_sizes[1]
-        encoded[:, 2] += self.cumulative_sizes[2]
-        return encoded.flatten()
+        
+        # Combine magnitude and pen state
+        combined_magnitude = encoded[:, 1] + (encoded[:, 2] * len(self.m_bins))
+        
+        encoded_final = np.column_stack([
+            encoded[:, 0] + self.cumulative_sizes[0],
+            combined_magnitude + self.cumulative_sizes[1]
+        ])
+        return encoded_final.flatten()
 
     def decode_stroke(self, ix):
         if isinstance(ix, torch.Tensor):
             ix = ix.cpu().numpy()
 
+        # Remove PAD and END tokens
         ix = ix[(ix != self.PAD_TOKEN) & (ix != self.END_TOKEN)]
-        ix = ix.reshape(-1, 3)
 
-        decoded_stroke = np.zeros((len(ix) + 1, 3))
-        for i, (r, m, p) in enumerate(ix, 1):
-            r -= self.cumulative_sizes[0]
-            m -= self.cumulative_sizes[1]
-            p -= self.cumulative_sizes[2]
+        # Reshape the flattened array back to Nx2
+        ix = ix.reshape(-1, 2)
 
-            magnitude = self.m_bins[m]
-            direction = self.base_rotations[r].dot([1, 0])
-            delta = direction * magnitude
-            decoded_stroke[i, :2] = decoded_stroke[i-1, :2] + delta
-            decoded_stroke[i, 2] = p
+        decoded_offsets = []
+        for i in range(len(ix)):
+            r = ix[i, 0] - self.cumulative_sizes[0]
+            combined_magnitude = ix[i, 1] - self.cumulative_sizes[1]
+            
+            m = combined_magnitude % len(self.m_bins)
+            p = combined_magnitude // len(self.m_bins)
+            
+            theta = np.arctan2(self.base_rotations[r][1,0], self.base_rotations[r][0,0])
+            r_value = self.m_bins[m]
+            
+            dx = r_value * np.cos(theta)
+            dy = r_value * np.sin(theta)
+            
+            decoded_offsets.append([dx, dy, p])
 
-        return decoded_stroke
+        return np.array(decoded_offsets)
 
     def __getitem__(self, idx):
         stroke = self.strokes[idx]
@@ -395,7 +400,6 @@ class QuantizedStrokeDataset(StrokeDataset):
         c[:text_len] = encoded_text[:text_len]
 
         return x, c, y
-
 
 def create_datasets(augment=True, max_seq_length=1100, num_words=3, num_rotations=64, num_magnitude_bins=256):
     np.random.seed(0) ; torch.manual_seed(0)
@@ -757,6 +761,10 @@ class AppConfig:
     ablate_cross_attention: bool = False  # New flag to ablate cross-attention
     augment: bool = True
     max_seq_length: int = 1250
+    
+    # Quantization parameters
+    num_rotations: int = 64
+    num_magnitude_bins: int = 256
 
     # optimization
     batch_size: int = 32
