@@ -18,6 +18,33 @@ from torch.utils.data.dataloader import DataLoader
 # from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import StepLR
 
+from sklearn.metrics import mean_squared_error
+from skimage.metrics import structural_similarity as ssim
+
+def evaluate_quantization(dataset, num_samples=100):
+    mse_scores = []
+    ssim_scores = []
+    for i in range(num_samples):
+        original_stroke = dataset.strokes[i]
+        encoded_stroke = dataset.encode_stroke(original_stroke)
+        decoded_stroke = offsets_to_strokes(dataset.decode_stroke(encoded_stroke))
+        
+        # Ensure same length by padding or truncating
+        max_len = max(len(original_stroke), len(decoded_stroke))
+        original_padded = np.pad(original_stroke, ((0, max_len - len(original_stroke)), (0, 0)), mode='constant')
+        decoded_padded = np.pad(decoded_stroke, ((0, max_len - len(decoded_stroke)), (0, 0)), mode='constant')
+        
+        mse = mean_squared_error(original_padded, decoded_padded)
+        mse_scores.append(mse)
+        
+        ssim_score = ssim(original_padded, decoded_padded, multichannel=True)
+        ssim_scores.append(ssim_score)
+    
+    return {
+        'mean_mse': np.mean(mse_scores),
+        'mean_ssim': np.mean(ssim_scores)
+    }
+
 
 ########## CODE FOR PLOTTING SAMPLES ##########
 
@@ -305,6 +332,7 @@ class QuantizedStrokeDataset(StrokeDataset):
         super().__init__(strokes, texts, chars, max_seq_length, max_text_length, name, augment)
         
         self.base_rotations = create_base_rotations(num_rotations)
+        self.rotation_angles = np.arctan2(self.base_rotations[:, 1, 0], self.base_rotations[:, 0, 0])
         self.m_bins = np.concatenate([
             np.linspace(0, 0.1, num_magnitude_bins//2),
             np.geomspace(0.1, 5, num_magnitude_bins//2)[1:]
@@ -319,34 +347,40 @@ class QuantizedStrokeDataset(StrokeDataset):
         self.END_TOKEN = self.vocab_size + 1
 
     def quantize_stroke(self, stroke_offsets):
-        quantized_stroke = []
-        for i in range(len(stroke_offsets)):
-            dx, dy, pen = stroke_offsets[i]
-            r = np.hypot(dx, dy)
-            theta = np.arctan2(dy, dx)
-            
-            closest_rotation = min(range(len(self.base_rotations)), 
-                                   key=lambda k: np.abs(np.arctan2(self.base_rotations[k][1,0], self.base_rotations[k][0,0]) - theta))
-            
-            quantized_magnitude = np.digitize(r, self.m_bins) - 1
-            
-            quantized_stroke.append((closest_rotation, quantized_magnitude, int(pen)))
+        if len(stroke_offsets) == 0:
+            return np.array([])  # Return empty array for empty input
         
-        return quantized_stroke
+        r = np.hypot(stroke_offsets[:, 0], stroke_offsets[:, 1])
+        theta = np.arctan2(stroke_offsets[:, 1], stroke_offsets[:, 0])
+        
+        # Handle zero-length strokes
+        zero_length_mask = r == 0
+        theta[zero_length_mask] = 0  # Assign arbitrary angle to zero-length strokes
+        
+        angle_diff = np.abs(theta[:, np.newaxis] - self.rotation_angles)
+        closest_rotation = np.argmin(angle_diff, axis=1)
+        
+        quantized_magnitude = np.clip(np.digitize(r, self.m_bins) - 1, 0, len(self.m_bins) - 1)
+        
+        return np.column_stack((closest_rotation, quantized_magnitude, stroke_offsets[:, 2].astype(int)))
 
     def encode_stroke(self, stroke):
-        stroke_offsets = strokes_to_offsets(stroke)
-        quantized_stroke = self.quantize_stroke(stroke_offsets)
-        encoded = np.array([(r, m, p) for r, m, p in quantized_stroke])
-        
-        # Combine magnitude and pen state
-        combined_magnitude = encoded[:, 1] + (encoded[:, 2] * len(self.m_bins))
-        
-        encoded_final = np.column_stack([
-            encoded[:, 0] + self.cumulative_sizes[0],
-            combined_magnitude + self.cumulative_sizes[1]
-        ])
-        return encoded_final.flatten()
+        try:
+            stroke_offsets = strokes_to_offsets(stroke)
+            quantized_stroke = self.quantize_stroke(stroke_offsets)
+            encoded = np.array([(r, m, p) for r, m, p in quantized_stroke])
+            
+            # Combine magnitude and pen state
+            combined_magnitude = encoded[:, 1] + (encoded[:, 2] * len(self.m_bins))
+            
+            encoded_final = np.column_stack([
+                encoded[:, 0] + self.cumulative_sizes[0],
+                combined_magnitude + self.cumulative_sizes[1]
+            ])
+            return encoded_final.flatten()
+        except Exception as e:
+            print(f"Error encoding stroke: {e}")
+            return np.array([self.PAD_TOKEN])  # Return a single PAD token on error
 
     def decode_stroke(self, ix):
         if isinstance(ix, torch.Tensor):
@@ -820,9 +854,12 @@ if __name__ == '__main__':
         augment=args.augment, 
         max_seq_length=args.max_seq_length, 
         num_words=args.num_words,
-        num_rotations=64,  # You can make this configurable
-        num_magnitude_bins=256  # You can make this configurable
+        num_rotations=args.num_rotations,
+        num_magnitude_bins=args.num_magnitude_bins
     )
+    quant_metrics = evaluate_quantization(train_dataset)
+    print(f"Quantization Metrics: MSE = {quant_metrics['mean_mse']:.4f}, SSIM = {quant_metrics['mean_ssim']:.4f}")
+    wandb.log({"quant_mse": quant_metrics['mean_mse'], "quant_ssim": quant_metrics['mean_ssim']})
     vocab_size = train_dataset.get_vocab_size()
     block_size = train_dataset.get_stroke_seq_length()
     context_block_size = train_dataset.get_text_seq_length()
