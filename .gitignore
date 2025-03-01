@@ -11,6 +11,7 @@ __pycache__
 *.epub
 *.json
 *.zip
+mech_interp_results/*
 /data/BRUSH*
 /data/BIGBANK*
 /data/*.json
@@ -27,6 +28,8 @@ __pycache__
 !data/sample.json.zip
 paperspace.sh
 cursivetransformer.key
+
+*.pt
 
 /examples*
 /deprecated*
