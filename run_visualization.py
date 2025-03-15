@@ -9,6 +9,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime
+import copy
 
 from model import get_all_args, get_checkpoint
 from data import create_datasets
@@ -31,6 +32,7 @@ def load_model(run_id, dataset_name, vocab_size, n_layer, max_seq_length):
         os.remove('best_checkpoint.pt')
         
     args = get_all_args(False)
+    args.train_size = 7000
     args.wandb_project = 'bigbank_2k'
     args.load_from_run_id = run_id
     args.dataset_name = dataset_name
@@ -52,6 +54,31 @@ def load_model(run_id, dataset_name, vocab_size, n_layer, max_seq_length):
     
     model, _, _, _, _ = get_checkpoint(args, sample_only=True)
     return model, test_dataset, args
+
+def test_generation_lengths(model, dataset, text, base_params):
+    """Test different n_words values and their effect on generation length"""
+    print("\n=== Testing different n_words values ===")
+    
+    test_values = [3, 4, 5, 6]  # Different values to test
+    word_list = text.strip().split()
+    print(f"Input text has {len(word_list)} words: {word_list}")
+    
+    for n in test_values:
+        print(f"\nTesting n_words = {n}")
+        test_params = copy.deepcopy(base_params)
+        test_params.n_words = n
+        
+        # Generate with current test parameters
+        try:
+            test_offsets, _ = generate_helper_fn(
+                model, dataset, word_list, test_params, return_logits=True
+            )
+            print(f"Number of offset sequences generated: {len(test_offsets)}")
+            print(f"Word list after trunc_or_pad: {word_list[:n]}")  # Show which words were processed
+        except Exception as e:
+            print(f"Error occurred: {str(e)}")
+    
+    print("\n=== Test complete ===\n")
 
 def main():
     # === CONFIGURATION ===
@@ -82,7 +109,7 @@ def main():
     print(f"Loading latest model (run_id: {run_id})...")
     model, dataset, args = load_model(
         run_id=run_id,
-        dataset_name='bigbank_3500',  # Updated dataset name
+        dataset_name='bigbank_3500',
         vocab_size=525,
         n_layer=5,
         max_seq_length=1050
@@ -91,11 +118,22 @@ def main():
     device = next(model.parameters()).device
     print(f"Model loaded on device: {device}")
     
-    # === GENERATE TEXT AND CAPTURE ATTENTION AND LOGITS ===
-    print(f"Generating text: '{text}'")
-    patterns, cross_patterns, self_hook, cross_hook, logit_hook, logit_outputs_list = mech_interp.setup_attention_hooks(model)
+    # Set up generation parameters
+    params = GenerationParams()
+    params.temperature = 0.6
+    params.do_sample = True
+    params.num_steps = args.max_seq_length
+    params.n_words = 4
+    params.verbose = True
     
-    # Register hooks
+    # Run our test before main visualization
+    test_generation_lengths(model, dataset, text, params)
+    
+    # === GENERATE TEXT AND CAPTURE ATTENTION ===
+    print(f"Proceeding with main visualization for text: '{text}'")
+    patterns, cross_patterns, self_hook, cross_hook = mech_interp.setup_attention_hooks(model)
+    
+    # Register hooks for attention only
     hooks = []
     for layer in model.transformer.h:
         hooks.extend([
@@ -103,29 +141,20 @@ def main():
             layer.cross_attn.register_forward_hook(cross_hook)
         ])
     
-    # Add hook for logits
-    hooks.append(model.lm_head.register_forward_hook(logit_hook))
-    
-    # Set up generation parameters
-    params = GenerationParams()
-    params.temperature = 0.6
-    params.do_sample = True
-    params.num_steps = args.max_seq_length
-    params.n_words = 4  # Ensure this is large enough for our text
-    params.verbose = True
-    
     # Generate text
     try:
         with torch.no_grad():
             word_list = text.strip().split()
-            generated_word_offsets = generate_helper_fn(model, dataset, word_list, params)
+            generated_word_offsets, all_logits = generate_helper_fn(
+                model, dataset, word_list, params, return_logits=True
+            )
     finally:
         # Clean up hooks
         for hook in hooks:
             hook.remove()
     
-    # Collect logits from hook output
-    logits = torch.cat(logit_outputs_list, dim=1)
+    # Concatenate all logits
+    logits = torch.cat(all_logits, dim=1)
     print(f"Collected logits shape: {logits.shape}")
     
     # === VISUALIZE ATTENTION FOR EACH LAYER AND HEAD ===
@@ -138,18 +167,18 @@ def main():
     for layer_idx in range(n_layers):
         # Generate attention plot for first head
         fig = mech_interp.plot_attention_comparison(
-            model, dataset, generated_word_offsets, text,
+            generated_word_offsets, text, params,
             patterns, cross_patterns,
             layer_idx=layer_idx, head_idx=0,  # First head
-            title="Attention Analysis (WORD_TOKEN model)"
+            title="Attention Analysis"
         )
         fig.savefig(f"{attention_dir}/attention_layer{layer_idx+1}_head1.png", 
                     bbox_inches='tight', dpi=150)
         plt.close(fig)
         
         # Generate entropy plot for this layer
-        fig = mech_interp.plot_entropy_analysis(
-            model, dataset, generated_word_offsets, text,
+        fig = mech_interp.plot_attention_entropy_analysis(
+            model, generated_word_offsets, text,
             patterns, cross_patterns, layer_idx=layer_idx
         )
         fig.savefig(f"{entropy_dir}/entropy_layer{layer_idx+1}.png", 
@@ -157,8 +186,8 @@ def main():
         plt.close(fig)
     
     # Overall entropy analysis across all layers
-    fig = mech_interp.plot_entropy_analysis(
-        model, dataset, generated_word_offsets, text,
+    fig = mech_interp.plot_attention_entropy_analysis(
+        model, generated_word_offsets, text,
         patterns, cross_patterns
     )
     fig.savefig(f"{entropy_dir}/entropy_all_layers.png", 

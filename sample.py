@@ -68,7 +68,7 @@ def plot_strokes(stroke, title, fig=None, ax=None, figsize=(12, 2), dpi=150, lin
 
 
 @torch.no_grad()
-def generate(model, idx, context, max_new_tokens, temperature=1.0, do_sample=False, top_k=None):
+def generate(model, idx, context, max_new_tokens, temperature=1.0, do_sample=False, top_k=None, return_logits=False):
     """
     Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
     the sequence max_new_tokens times, feeding the predictions back into the model each time.
@@ -76,11 +76,13 @@ def generate(model, idx, context, max_new_tokens, temperature=1.0, do_sample=Fal
     """
     block_size = model.get_block_size()
     steps = max(0, max_new_tokens-idx.size(1))
+    all_logits = []
     for i in range(steps):
         # if the sequence context is growing too long we must crop it at block_size
         idx_cond = idx if idx.size(1) <= block_size else idx[:, -block_size:]
         # forward the model to get the logits for the index in the sequence
         logits, _ = model(idx_cond, context)
+        all_logits.append(logits)
         # pluck the logits at the final step and scale by desired temperature
         logits = logits[:, -1, :] / temperature
         # optionally crop the logits to only the top k options
@@ -97,6 +99,8 @@ def generate(model, idx, context, max_new_tokens, temperature=1.0, do_sample=Fal
         # append sampled index to the running sequence and continue
         idx = torch.cat((idx, idx_next), dim=1)
 
+    if return_logits:
+        return idx, all_logits
     return idx
 
 
@@ -137,7 +141,7 @@ def save_samples(model, dataset, num=2, model_device='cpu', warmup_steps=50, do_
     print('-'*80)
 
 
-def generate_helper_fn(model, dataset, word_list, params):
+def generate_helper_fn(model, dataset, word_list, params, return_logits=False):
     model_device = next(model.parameters()).device
     warmup_sample_ix = params.warmup_sample_ix if params.warmup_sample_ix else torch.randint(len(dataset), (1,)).item()
     if params.verbose: print(f' (warmup_sample_ix={warmup_sample_ix})')
@@ -175,19 +179,23 @@ def generate_helper_fn(model, dataset, word_list, params):
     X_init = first_word_tokens.unsqueeze(0).to(model_device)
 
     steps = params.num_steps - X_init.size(1)
-    X_samp = generate(model, X_init, context, steps, temperature=params.temperature,
-                      top_k=params.top_k, do_sample=params.do_sample).to('cpu')
+    X_samp, all_logits = generate(model, X_init, context, steps, temperature=params.temperature,
+                      top_k=params.top_k, do_sample=params.do_sample, return_logits=return_logits)
+    
+    X_samp = X_samp.to('cpu')
 
     stroke_seq = X_samp[0].detach().cpu().numpy()[warmup_steps:]
     offset_samp = dataset.decode_stroke(stroke_seq)
     
- # Ensure we have exactly the number of words requested
+    # Ensure we have exactly the number of words requested
     n_expected = len(word_list)
     if len(offset_samp) > n_expected:
         offset_samp = offset_samp[:n_expected]
     elif len(offset_samp) < n_expected:  # Use empty numpy arrays instead of empty lists
         offset_samp.extend([np.zeros((0, 3)) for _ in range(n_expected - len(offset_samp))])
     
+    if return_logits:
+        return offset_samp, all_logits
     return offset_samp
 
 

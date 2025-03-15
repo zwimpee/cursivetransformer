@@ -33,7 +33,7 @@ cursivetransformer.key
 
 /examples*
 /deprecated*
-
+*.pdf
 
 __pycache__/
 *.py[cod]

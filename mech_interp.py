@@ -2,19 +2,13 @@
 Mechanistic interpretability tools for visualizing transformer attention
 in the cursive handwriting model.
 """
-
-import os
 import numpy as np
 import torch
 from torch.nn import functional as F
 import math
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-from matplotlib.colors import LinearSegmentedColormap
-import time
-
-from model import Transformer
-from data import offsets_to_strokes
+import seaborn as sns
 from sample import word_offsets_to_points, plot_strokes, GenerationParams
 
 # =============== ATTENTION HOOKS ===============
@@ -23,7 +17,6 @@ def setup_attention_hooks(model):
     """Set up hooks for capturing attention patterns in the model"""
     self_attn_patterns = {i: {} for i in range(len(model.transformer.h))}
     cross_attn_patterns = {i: {} for i in range(len(model.transformer.h))}
-    logit_outputs = []  # To store logits for token entropy calculation
     
     def self_attn_hook(mod, inp, out):
         # Extract query, key, value from the module
@@ -66,18 +59,13 @@ def setup_attention_hooks(model):
         cross_attn_patterns[layer_idx][mod] = att.detach()
         
         return out
-    
-    def logit_hook(mod, inp, out):
-        # Store the logits output from the model's head
-        logit_outputs.append(out.detach())
-        return out
         
-    return self_attn_patterns, cross_attn_patterns, self_attn_hook, cross_attn_hook, logit_hook, logit_outputs
+    return self_attn_patterns, cross_attn_patterns, self_attn_hook, cross_attn_hook
 
 
 # =============== ENTROPY CALCULATION ===============
 
-def calculate_entropy(attention_weights):
+def calculate_attention_entropy(attention_weights):
     """Calculate entropy of attention distributions"""
     # Ensure we don't have zeros by adding small epsilon
     eps = 1e-10
@@ -92,7 +80,7 @@ def calculate_entropy(attention_weights):
 def calculate_logit_entropy(logits):
     """Calculate entropy of token distribution from logits"""
     # Apply softmax to get probability distribution
-    probs = F.softmax(logits, dim=-1)
+    probs = F.softmax(logits , dim=-1)
     
     # Add small epsilon to avoid log(0)
     eps = 1e-10
@@ -111,7 +99,6 @@ def plot_attention_heatmap(attention_matrix, ax, title, cmap="YlOrRd",
                            xticklabels=50, yticklabels=50,
                            vmin=None, vmax=None):
     """Plot a single attention heatmap"""
-    import seaborn as sns
     sns.heatmap(
         attention_matrix,
         ax=ax,
@@ -129,12 +116,12 @@ def plot_attention_heatmap(attention_matrix, ax, title, cmap="YlOrRd",
     return ax
 
 
-def plot_attention_comparison(model, dataset, generated_word_offsets, text,
+# - [ ] TODO: Ammend this with Sam so that the cross attention plot has the input text correctly aligned, and the x-axis of the cross attention plot should be the input ascii character token sequence.
+def plot_attention_comparison(generated_word_offsets, text, params,
                               patterns, cross_patterns,
                               layer_idx=3, head_idx=3, title="Attention Analysis",
                               figsize=(16, 12), dpi=150):
     """Plot attention patterns for a single model"""
-    params = GenerationParams()
     fig = plt.figure(figsize=figsize, dpi=dpi)
     gs = gridspec.GridSpec(3, 1, height_ratios=[0.8, 1, 1], hspace=0.3)
 
@@ -205,7 +192,8 @@ def plot_attention_comparison(model, dataset, generated_word_offsets, text,
     return fig
 
 
-def plot_entropy_analysis(model, dataset, generated_word_offsets, text,
+# - [ ] TODO: Rewrite (or at least validate) this function with Sam, and ensure our interpretation of the attention entropy is valid and that our intuition is sound.
+def plot_attention_entropy_analysis(model, generated_word_offsets, text,
                           patterns, cross_patterns, layer_idx=None,
                           figsize=(16, 12), dpi=150):
     """Plot entropy of attention distributions across layers and heads"""
@@ -240,8 +228,8 @@ def plot_entropy_analysis(model, dataset, generated_word_offsets, text,
         cross_attn = next(iter(cross_patterns[layer].values())).squeeze(0).detach().cpu()
         
         # Calculate entropy
-        self_entropy = calculate_entropy(self_attn)  # (n_heads, seq_len)
-        cross_entropy = calculate_entropy(cross_attn)  # (n_heads, seq_len)
+        self_entropy = calculate_attention_entropy(self_attn)  # (n_heads, seq_len)
+        cross_entropy = calculate_attention_entropy(cross_attn)  # (n_heads, seq_len)
         
         # Plot self-attention entropy
         ax_self = fig.add_subplot(gs[1, 0])
@@ -284,8 +272,8 @@ def plot_entropy_analysis(model, dataset, generated_word_offsets, text,
             self_attn = next(iter(patterns[layer].values())).squeeze(0).detach().cpu()
             cross_attn = next(iter(cross_patterns[layer].values())).squeeze(0).detach().cpu()
             
-            self_entropy = calculate_entropy(self_attn).mean(dim=0).numpy()  # Average across heads
-            cross_entropy = calculate_entropy(cross_attn).mean(dim=0).numpy()
+            self_entropy = calculate_attention_entropy(self_attn).mean(dim=0).numpy()  # Average across heads
+            cross_entropy = calculate_attention_entropy(cross_attn).mean(dim=0).numpy()
             
             all_self_entropy.append(self_entropy)
             all_cross_entropy.append(cross_entropy)
@@ -321,6 +309,7 @@ def plot_entropy_analysis(model, dataset, generated_word_offsets, text,
     return fig
 
 
+# - [ ] TODO: Rewrite this function with Sam, such that it generates COLORED STROKES for the generated writing, where the color of the stroke corresponds to the entropy of the token logits at that position.
 def plot_token_logit_entropy(logits, text, generated_word_offsets, 
                              figsize=(16, 8), dpi=150):
     """Plot entropy of token logits to show model's confidence over time"""
@@ -379,6 +368,7 @@ def plot_token_logit_entropy(logits, text, generated_word_offsets,
     return fig
 
 
+# - [ ] TODO: Rewrite this function with Sam after we rewwrite the token logit entropy function.
 def plot_combined_entropy_analysis(model, dataset, generated_word_offsets, text,
                                   patterns, cross_patterns, logits,
                                   figsize=(16, 14), dpi=150):
@@ -406,8 +396,8 @@ def plot_combined_entropy_analysis(model, dataset, generated_word_offsets, text,
         self_attn = next(iter(patterns[layer].values())).squeeze(0).detach().cpu()
         cross_attn = next(iter(cross_patterns[layer].values())).squeeze(0).detach().cpu()
         
-        self_entropy = calculate_entropy(self_attn).mean(dim=0).numpy()  # Average across heads
-        cross_entropy = calculate_entropy(cross_attn).mean(dim=0).numpy()
+        self_entropy = calculate_attention_entropy(self_attn).mean(dim=0).numpy()  # Average across heads
+        cross_entropy = calculate_attention_entropy(cross_attn).mean(dim=0).numpy()
         
         all_self_entropy.append(self_entropy)
         all_cross_entropy.append(cross_entropy)
@@ -434,8 +424,23 @@ def plot_combined_entropy_analysis(model, dataset, generated_word_offsets, text,
     
     # Calculate and plot token logit entropy
     ax_token = fig.add_subplot(gs[3])
+    
+    # Make sure we're working with the right dimension
+    if len(logits.shape) == 3 and logits.shape[0] == 1:
+        logits = logits.squeeze(0)  # Remove batch dimension if it's 1
+        
     token_entropy = calculate_logit_entropy(logits).cpu().numpy()
     ax_token.plot(token_entropy, 'r-', linewidth=1.5)
+    
+    # Set appropriate y-axis limits
+    if np.isfinite(token_entropy).any():
+        min_val = np.nanmin(token_entropy[np.isfinite(token_entropy)])
+        max_val = np.nanmax(token_entropy[np.isfinite(token_entropy)])
+        if min_val != max_val:
+            padding = (max_val - min_val) * 0.1
+            ax_token.set_ylim([max(0, min_val - padding), max_val + padding])
+        else:
+            ax_token.set_ylim([max(0, min_val - 0.5), min_val + 0.5])
     
     # Add semi-transparent running average for token entropy
     window_size = min(50, len(token_entropy) // 5)
